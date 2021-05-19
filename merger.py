@@ -65,7 +65,7 @@ class dataSetup():
                 self.demo['age'][i]=1
             elif n>=17 and n<=24:
                 self.demo['age'][i]=2
-            elif n>=24 and n<=65:
+            elif n>24 and n<=65:
                 self.demo['age'][i]=3
             else:
                 self.demo['age'][i]=4
@@ -113,46 +113,111 @@ class setupDataMeanEncoding(dataSetup):
         dataSetup.__init__(self,  demo=demo, drug=drug, reac=reac)
         print("dataSetup init done")
         self.mode=mode
-    def pairwiseDrugMerge(self,drug):
-        drug=drug.drop_duplicates().reset_index(drop=True)
-        pids=list(drug.primaryid)
-        cids=list(drug.caseid)
-        pidDF=[]
-        cidDF=[]
-        ai1=[]
-        ai2=[]
-        startTime=time.time()
-        for index,(pid,cid) in enumerate(zip(pids,cids)):
-            pidMemo=set()
-            if index%1000==0:
-                print(index,"out of",len(drug),"completed")
-            temp=drug[drug.primaryid==pid].drop_duplicates().reset_index(drop=True)
-            for i in range(len(temp)):
-                for j in range(i+1,len(temp)):
-                    if (temp.prod_ai[i],temp.prod_ai[j]) in pidMemo:
-                        continue
-                    if temp.prod_ai[i]==temp.prod_ai[j]:
-                            continue
-                    else:   
-                        pidDF.append(pid)
-                        cidDF.append(cid)
-                        ai1.append(temp.prod_ai[i])
-                        ai2.append(temp.prod_ai[j])
-                        pidMemo.add((temp.prod_ai[i],temp.prod_ai[j]))
-                        pidMemo.add((temp.prod_ai[j],temp.prod_ai[i]))
-        ret=pd.DataFrame(columns=["primaryid","caseid","prod_ai1","prod_ai2"])
-        ret["primaryid"]=pidDF
-        ret["caseid"]=cidDF
-        ret["prod_ai1"]=ai1
-        ret["prod_ai2"]=ai2
-        ret=ret.drop_duplicates().reset_index(drop=True)
+
+    def pairwiseDrugMergeByPid(self, pid):
+        # print(pid)
+        pidDF = []
+        cidDF = []
+        ai1 = []
+        ai2 = []
+        pidMemo = set()
+        drug = self.drug
+        temp = drug[drug.primaryid == pid].drop_duplicates().reset_index(drop=True)
+
+        for i in range(len(temp)):
+            for j in range(i + 1, len(temp)):
+                if (temp.prod_ai[i], temp.prod_ai[j]) in pidMemo:
+                    continue
+                if temp.prod_ai[i] == temp.prod_ai[j]:
+                    continue
+                else:
+                    cid = list(temp.caseid)[i]
+                    pd.DataFrame(columns=['primaryid','caseid',
+                                          'prod_ai1','prod_ai2']).append(pd.Series({"primaryid": pid,
+                                                                                     "caseid": cid,
+                                                                                     "prod_ai1":temp.prod_ai[i],
+                                                                                     "prod_ai2": temp.prod_ai[j]}),
+                                                                         ignore_index=True).to_csv("pairDrugs.csv",
+                                                                                                  mode="a",
+                                                                                                  index=False,
+                                                                                                  header=False)
+                    # pidDF.append(pid)
+                    #
+                    # cidDF.append(cid)
+                    # ai1.append(temp.prod_ai[i])
+                    # ai2.append(temp.prod_ai[j])
+                    pidMemo.add((temp.prod_ai[i], temp.prod_ai[j]))
+                    pidMemo.add((temp.prod_ai[j], temp.prod_ai[i]))
+        # ret = pd.DataFrame(columns=["primaryid", "caseid", "prod_ai1", "prod_ai2"])
+        # ret["primaryid"] = pidDF
+        # ret["caseid"] = cidDF
+        # ret["prod_ai1"] = ai1
+        # ret["prod_ai2"] = ai2
+        # print(pidDF,cidDF,ai1,ai2)
+        # print(ret)
+        # self.pairDrug=self.pairDrug.append(ret, ignore_index=True)
+        print("\r",pid, "done")
+        # return ret
+        # print(self.pairDrug)
+
+    def pairwiseDrugMerge(self):
+        drug = self.drug
+        drug = drug.drop_duplicates().reset_index(drop=True)
+
+        pids = list(drug.primaryid.unique())
+
+        startTime = time.time()
+
+        pool = multiprocessing.Pool(processes=8)
+        pd.DataFrame(columns=['primaryid', 'caseid',
+                              'prod_ai1', 'prod_ai2']).to_csv("pairDrugs.csv",index=False, mode="w")
+        result = pool.map(self.pairwiseDrugMergeByPid, pids)
+        #self.pairDrug = pd.concat(result, ignore_index=True)
+        # print(result)
+        pool.close()
+        pool.join()
         print('Time taken = {} seconds'.format(time.time() - startTime))
-        return ret    
+    # def pairwiseDrugMerge(self,drug):
+    #     drug=drug.drop_duplicates().reset_index(drop=True)
+    #     pids=list(drug.primaryid)
+    #     cids=list(drug.caseid)
+    #     pidDF=[]
+    #     cidDF=[]
+    #     ai1=[]
+    #     ai2=[]
+    #     startTime=time.time()
+    #     for index,(pid,cid) in enumerate(zip(pids,cids)):
+    #         pidMemo=set()
+    #         if index%1000==0:
+    #             print(index,"out of",len(drug),"completed")
+    #         temp=drug[drug.primaryid==pid].drop_duplicates().reset_index(drop=True)
+    #         for i in range(len(temp)):
+    #             for j in range(i+1,len(temp)):
+    #                 if (temp.prod_ai[i],temp.prod_ai[j]) in pidMemo:
+    #                     continue
+    #                 if temp.prod_ai[i]==temp.prod_ai[j]:
+    #                         continue
+    #                 else:
+    #                     pidDF.append(pid)
+    #                     cidDF.append(cid)
+    #                     ai1.append(temp.prod_ai[i])
+    #                     ai2.append(temp.prod_ai[j])
+    #                     pidMemo.add((temp.prod_ai[i],temp.prod_ai[j]))
+    #                     pidMemo.add((temp.prod_ai[j],temp.prod_ai[i]))
+    #     ret=pd.DataFrame(columns=["primaryid","caseid","prod_ai1","prod_ai2"])
+    #     ret["primaryid"]=pidDF
+    #     ret["caseid"]=cidDF
+    #     ret["prod_ai1"]=ai1
+    #     ret["prod_ai2"]=ai2
+    #     ret=ret.drop_duplicates().reset_index(drop=True)
+    #     print('Time taken = {} seconds'.format(time.time() - startTime))
+    #     return ret
     
     def mergeTables(self):
         if "pair" in self.mode:
+            self.pairwiseDrugMerge()
+            pairDrug = pd.read_csv("pairDrugs.csv").dropna().reset_index(drop=True)
             print("pair merge in prog")
-            pairDrug=self.pairwiseDrugMerge(self.drug)
             print("merge drug pair done")
             first_df=self.demo.merge(pairDrug, how="left", on=["primaryid","caseid"])
             finalDF=first_df.merge(self.reaction,how="left", on=["primaryid","caseid"]).drop_duplicates()

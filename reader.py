@@ -84,10 +84,18 @@ class dataReader():
             print("failed for {}".format(n))
             
     def multiprocessor(self):
-        #for i in self.mode:
-#             self.currentMode=i
-            pool=multiprocessing.Pool(processes=6)
+        # for i in self.mode:
+            # self.currentMode=i
+#             processes = [None] * 4
+#             for i in range(4):
+#                 processes[i] = multiprocessing.Process(target=self.appender, args=(i,))
+#                 processes[i].start()
+#             for i in range(4):
+#                 processes[i].join()
+            #pool=multiprocessing.Pool(processes=6)
             csvList=self.demographics
-            result=pool.map(self.appender, range(len(csvList)))
-            pool.close()
-            pool.join()
+            for i in range(len(csvList)):
+                self.appender(i)
+            #result=pool.map(self.appender, range(len(csvList)))
+            #pool.close()
+            #pool.join()
