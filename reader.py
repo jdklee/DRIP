@@ -2,10 +2,15 @@
         
 import pandas as pd
 from merger import *
-#from encoder import *
+from encoder import *
 import numpy as np
 import time
 import multiprocessing
+
+import os
+from io import StringIO
+from google.cloud import storage
+
 class dataReader():
     def __init__(self, chunkSize, drugs, reactions, demographics,mode=False):
         self.chunkSize=chunkSize
@@ -15,6 +20,8 @@ class dataReader():
         self.reactions=reactions
         self.demographics=demographics
         self.first_one = True
+
+
         
     def reader(self):
         path=self.path
@@ -29,29 +36,32 @@ class dataReader():
         reaccols=["primaryid","caseid","pt"]
         
         demo,drug,react=self.demographics[n], self.drugs[n], self.reactions[n]
+        #read drugs
         try:
             d=pd.read_csv(drug, sep='$', lineterminator='\r', usecols=drugcols,).dropna().reset_index(drop=True)
-        except:
-            
+        except Exception as e:
+            print(e)
+
             print("n:{}\n".format(n),self.drugs[n],"\n",pd.read_csv(drug, sep='$', lineterminator='\r').columns)
+
+        #read reactions
         try:
             r=pd.read_csv(react, sep='$', lineterminator='\r', usecols=reaccols,)
-        except:
+        except Exception as e:
+            print(e)
+            print("n:{}\n".format(n),self.reactions[n],"\n",pd.read_csv(react, sep='$', lineterminator='\r').columns)
 
-            print("n:{}\n".format(n),self.react[n],"\n",pd.read_csv(react, sep='$', lineterminator='\r').columns)
+        #read demo
         try:
             dem=pd.read_csv(demo, sep='$', lineterminator='\r', usecols=democols,)
-
-                
-        
-                
-        except:
-            
+        except Exception as e:
+            print(e)
             try:
                 dem=pd.read_csv(demo, sep='$', lineterminator='\r', 
                                 usecols=["primaryid","caseid","age","gndr_cod","wt","wt_cod"])
                 dem=dem.rename({"gndr_cod":"sex"},axis=1)
-            except:
+            except Exception as e:
+                print(e)
                 print("n:{}\n".format(n),self.demographics[n],"\n",pd.read_csv(demo, sep='$', lineterminator='\r').columns)
                 
         try:
@@ -66,8 +76,10 @@ class dataReader():
                 print("Mean Encoder setup")
                 a=setupDataMeanEncoding(demo=dem, drug=d, reac=r, mode=self.mode)
                 df=a.clean()
+                print("drug merge complete, saving to csv")
                 self.outputFile="aggregate_{}.csv".format(self.mode)
                 df.dropna().to_csv(self.outputFile, mode="a", index=False)
+                print("save complete for {}".format(n))
                 
                 
             
@@ -77,25 +89,32 @@ class dataReader():
                 a = setupDataFilter(demo=dem, drug=d, reac=r, reactionType=self.mode)
                 df = a.clean()
                 self.outputFile="aggregate_{}.csv".format(self.mode)
+                print(self.outputFile)
 
                 df.dropna().to_csv(self.outputFile, mode="a", index=False)
-            
-        except:
+
+        except Exception as e:
+            print(e)
             print("failed for {}".format(n))
             
     def multiprocessor(self):
         # for i in self.mode:
             # self.currentMode=i
-#             processes = [None] * 4
-#             for i in range(4):
-#                 processes[i] = multiprocessing.Process(target=self.appender, args=(i,))
-#                 processes[i].start()
-#             for i in range(4):
-#                 processes[i].join()
-            #pool=multiprocessing.Pool(processes=6)
+            # processes = [None] * 4
+            # for i in range(4):
+            #     processes[i] = multiprocessing.Process(target=self.appender, args=(i,))
+            #     processes[i].start()
+            # for i in range(4):
+            #     processes[i].join()
+
             csvList=self.demographics
-            for i in range(len(csvList)):
-                self.appender(i)
-            #result=pool.map(self.appender, range(len(csvList)))
-            #pool.close()
-            #pool.join()
+            # if "pair" in self.mode or "single" in self.mode:
+            # for i in range(len(csvList)):
+            #     self.appender(i)
+
+            startTime=time.time()
+            pool = multiprocessing.Pool(processes=10)
+            result=pool.map(self.appender, range(len(csvList)))
+            print("time taken to process {}: {}".format(self.mode, str(time.time()-startTime)))
+            pool.close()
+            pool.join()

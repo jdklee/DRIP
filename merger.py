@@ -1,5 +1,7 @@
 import pandas as pd
-
+import os
+from io import StringIO
+from google.cloud import storage
 import numpy as np
 import time
 import multiprocessing
@@ -115,11 +117,7 @@ class setupDataMeanEncoding(dataSetup):
         self.mode=mode
 
     def pairwiseDrugMergeByPid(self, pid):
-        # print(pid)
-        pidDF = []
-        cidDF = []
-        ai1 = []
-        ai2 = []
+
         pidMemo = set()
         drug = self.drug
         temp = drug[drug.primaryid == pid].drop_duplicates().reset_index(drop=True)
@@ -141,24 +139,10 @@ class setupDataMeanEncoding(dataSetup):
                                                                                                   mode="a",
                                                                                                   index=False,
                                                                                                   header=False)
-                    # pidDF.append(pid)
-                    #
-                    # cidDF.append(cid)
-                    # ai1.append(temp.prod_ai[i])
-                    # ai2.append(temp.prod_ai[j])
+
                     pidMemo.add((temp.prod_ai[i], temp.prod_ai[j]))
                     pidMemo.add((temp.prod_ai[j], temp.prod_ai[i]))
-        # ret = pd.DataFrame(columns=["primaryid", "caseid", "prod_ai1", "prod_ai2"])
-        # ret["primaryid"] = pidDF
-        # ret["caseid"] = cidDF
-        # ret["prod_ai1"] = ai1
-        # ret["prod_ai2"] = ai2
-        # print(pidDF,cidDF,ai1,ai2)
-        # print(ret)
-        # self.pairDrug=self.pairDrug.append(ret, ignore_index=True)
-        print("\r",pid, "done")
-        # return ret
-        # print(self.pairDrug)
+
 
     def pairwiseDrugMerge(self):
         drug = self.drug
@@ -171,56 +155,26 @@ class setupDataMeanEncoding(dataSetup):
         pool = multiprocessing.Pool(processes=8)
         pd.DataFrame(columns=['primaryid', 'caseid',
                               'prod_ai1', 'prod_ai2']).to_csv("pairDrugs.csv",index=False, mode="w")
+        print("pairwaise merger starting")
         result = pool.map(self.pairwiseDrugMergeByPid, pids)
         #self.pairDrug = pd.concat(result, ignore_index=True)
         # print(result)
         pool.close()
         pool.join()
         print('Time taken = {} seconds'.format(time.time() - startTime))
-    # def pairwiseDrugMerge(self,drug):
-    #     drug=drug.drop_duplicates().reset_index(drop=True)
-    #     pids=list(drug.primaryid)
-    #     cids=list(drug.caseid)
-    #     pidDF=[]
-    #     cidDF=[]
-    #     ai1=[]
-    #     ai2=[]
-    #     startTime=time.time()
-    #     for index,(pid,cid) in enumerate(zip(pids,cids)):
-    #         pidMemo=set()
-    #         if index%1000==0:
-    #             print(index,"out of",len(drug),"completed")
-    #         temp=drug[drug.primaryid==pid].drop_duplicates().reset_index(drop=True)
-    #         for i in range(len(temp)):
-    #             for j in range(i+1,len(temp)):
-    #                 if (temp.prod_ai[i],temp.prod_ai[j]) in pidMemo:
-    #                     continue
-    #                 if temp.prod_ai[i]==temp.prod_ai[j]:
-    #                         continue
-    #                 else:
-    #                     pidDF.append(pid)
-    #                     cidDF.append(cid)
-    #                     ai1.append(temp.prod_ai[i])
-    #                     ai2.append(temp.prod_ai[j])
-    #                     pidMemo.add((temp.prod_ai[i],temp.prod_ai[j]))
-    #                     pidMemo.add((temp.prod_ai[j],temp.prod_ai[i]))
-    #     ret=pd.DataFrame(columns=["primaryid","caseid","prod_ai1","prod_ai2"])
-    #     ret["primaryid"]=pidDF
-    #     ret["caseid"]=cidDF
-    #     ret["prod_ai1"]=ai1
-    #     ret["prod_ai2"]=ai2
-    #     ret=ret.drop_duplicates().reset_index(drop=True)
-    #     print('Time taken = {} seconds'.format(time.time() - startTime))
-    #     return ret
+
     
     def mergeTables(self):
         if "pair" in self.mode:
+            print("pair merge in prog")
             self.pairwiseDrugMerge()
             pairDrug = pd.read_csv("pairDrugs.csv").dropna().reset_index(drop=True)
-            print("pair merge in prog")
+
             print("merge drug pair done")
             first_df=self.demo.merge(pairDrug, how="left", on=["primaryid","caseid"])
-            finalDF=first_df.merge(self.reaction,how="left", on=["primaryid","caseid"]).drop_duplicates()
+            print("demo merged with drug")
+            finalDF=first_df.merge(self.reac,how="left", on=["primaryid","caseid"]).drop_duplicates()
+            print("reaction merged")
             return finalDF
         if "single" in self.mode:
             first_df=self.demo.merge(self.drug, how="left", on=["primaryid","caseid"])
@@ -235,14 +189,9 @@ class setupDataMeanEncoding(dataSetup):
         
 class setupDataFilter(dataSetup):
     def __init__(self, demo, drug, reac, reactionType):
-        print("init starting")
         dataSetup.__init__(self,  demo=demo, drug=drug, reac=reac)
-        print("superclass made")
         self.reactionType=reactionType
         self.reac=self.reac[self.reac.pt==self.reactionType]
-        print("reac filtered")
-        print(self.reac)
-        print("init successful for DataFilter child class")
     def mergeTables(self):
         drug_filtered=self.drug
         demo_filtered=self.demo
@@ -250,13 +199,9 @@ class setupDataFilter(dataSetup):
         if "wt_cod" in demo_filtered.columns:
             self.convert_kg_to_lb(demo_filtered)
             demo_filtered.drop("wt_cod", axis=1, inplace=True)
-            
-        
-        a=AImerger(drug=drug_filtered,react=reac_filtered)
-        pairDrug=a.mergeAIsimple()
-        self.pairDrug=pairDrug
 
-              
+        a = AImerger(drug=drug_filtered, react=reac_filtered)
+        pairDrug = a.mergeAIsimple()
         first_df=reac_filtered.merge(demo_filtered.dropna(), how="inner", on=["primaryid"])
         roughDF=first_df.merge(pairDrug.dropna(),how="inner", on=["primaryid"])
         

@@ -9,7 +9,9 @@ from collections import Counter
 import copy
 #from category_encoders import TargetEncoder
 
-
+import os
+from io import StringIO
+from google.cloud import storage
         
     
         
@@ -17,13 +19,14 @@ import copy
                 
                 
 class oneHotEncoder():
-    def __init__(self, df, aiThreshold, labelThreshold, savePath, mode=False):
+    def __init__(self, df, aiThreshold, labelThreshold, savePath, mode=False, hotcode=False):
         self.df=df.reset_index(drop=True)
         self.mode=mode
         self.aiThreshold=aiThreshold
         self.labelThreshold=labelThreshold
         self.startTime=time.time()
         self.savePath=savePath
+        self.hotcode=hotcode
         
         
     def setupLabels(self):
@@ -39,25 +42,27 @@ class oneHotEncoder():
 
     def setupColumns(self):
         print("setting up columns")
-        c=[]
-        startTime=time.time()
-        [c.extend(ast.literal_eval(ai)) for ai in self.df.prod_ai]
-        c=dict(Counter(c))
-        ais=list(set([k for (k,v) in c.items() if v>self.aiThreshold]))
+        startTime = time.time()
+        if not self.hotcode:
+
+            c=[]
+
+            [c.extend(ast.literal_eval(ai)) for ai in self.df.prod_ai]
+            c=dict(Counter(c))
+            ais=list(set([k for (k,v) in c.items() if v>self.aiThreshold]))
+        if self.hotcode:
+            ais=self.hotcode
         for ai in ais:
             self.df[ai]=0
-        print(self.df.columns)
+
         print("setup column finished in {} seconds".format(time.time()-startTime))
 
     def encodeIndex(self,index):
         startTime=time.time()
-        if index%1000==0:
+        if index%5000==0:
             print(index)
-        if index<10:
 
-            header=True
-        if index>=10:
-            header=False
+
         
         ais=ast.literal_eval(self.df.prod_ai[index])
 
@@ -73,31 +78,41 @@ class oneHotEncoder():
                         if ai in self.df.columns:
                             temp[ai]=1
                 temp=temp.drop(["primaryid","caseid","prod_ai"])
-                pd.DataFrame().append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
-                                                                      index=False, header=header)
+                self.ret.append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
+                                                                      index=False, header=False)
         else:
             temp=copy.deepcopy(currRow)
             for ai in ais:
                 if ai in self.df.columns:
                     temp[ai]=1
             temp = temp.drop(["primaryid", "caseid_x", "prod_ai"])
-            pd.DataFrame().append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
-                                                                  index=False, header=header)
+            self.ret.append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
+                                                                  index=False, header=False)
 
                
     
     def encode(self):
         print("encoding active ingredients")
         indexes=list(range(len(self.df)))
+
+        # a =['age','sex','wt','pt'].extend(self.hotcode)
+        # columns = a
+        self.ret=pd.DataFrame()
+        #self.ret.to_csv(self.savePath, index=False, header=True)
         pool=multiprocessing.Pool(processes=10)
         pool.map(self.encodeIndex,indexes)
         pool.close()
         pool.join()
         self.df.drop("prod_ai",axis=1,inplace=True)
         print('Time taken to encode AIs = {} seconds'.format(time.time() - self.startTime))
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/jdklee/Downloads/patentcitation-291203-3875e284f934.json'
 
-    
-
+        gcs = storage.Client()
+        gcs.get_bucket('abbvie_data_one').blob("{}OneHotEncoded.csv".format(self.mode)).upload_from_filename("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode),
+                                                                                 content_type='text/csv')
+        print("save to gcloud successful {}".format(self.mode))
+        os.remove("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode))
+        os.remove("/Users/jdklee/Documents/AbbVie/aggregate_{}.csv".format(self.mode))
     def run(self):
         self.setupColumns()
         if not self.mode:
@@ -115,8 +130,9 @@ df['Animal Encoded'] = encoder.fit_transform(df['Animal'], df['Target'])
 
 class meanEncoder(oneHotEncoder):
     def __init__(self, df, aiThreshold, labelThreshold, savePath, mode=False):
+        print("init mean encoder")
         oneHotEncoder.__init__(self, df, aiThreshold, labelThreshold, savePath, mode=mode)
-
+        print("init done")
     def encode(self):
         print("encoding active ingredients")
         if "pair" in self.mode:
@@ -124,6 +140,8 @@ class meanEncoder(oneHotEncoder):
         if "single" in self.mode:
             catCol=["prod_ai"]
         self.calc_smooth_mean(df=self.df, catCol=catCol, target="pt", weight=300)
+        print(self.smooth1)
+        print(self.smooth2)
         indexes=list(range(len(self.df)))
         pool=multiprocessing.Pool(processes=8)
         pool.map(self.encodeIndex,indexes)
