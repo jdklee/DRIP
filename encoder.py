@@ -12,23 +12,47 @@ import copy
 import os
 from io import StringIO
 from google.cloud import storage
-        
-    
-        
-        
-                
-                
+from pandarallel import pandarallel
+
+pandarallel.initialize(progress_bar=True )
+
+
 class oneHotEncoder():
-    def __init__(self, df, aiThreshold, labelThreshold, savePath, mode=False, hotcode=False):
-        self.df=df.reset_index(drop=True)
-        self.mode=mode
-        self.aiThreshold=aiThreshold
-        self.labelThreshold=labelThreshold
-        self.startTime=time.time()
-        self.savePath=savePath
-        self.hotcode=hotcode
-        
-        
+    def __init__(self, df, aiThreshold, labelThreshold, savePath, mode=False,
+                 hotcode=False, reactioncode=False, both=False):
+        print("No drop encoder")
+        self.df = df.reset_index(drop=True)
+        self.mode = mode
+        self.aiThreshold = aiThreshold
+        self.labelThreshold = labelThreshold
+        self.startTime = time.time()
+        self.savePath = savePath
+        self.hotcode = hotcode
+        self.reactioncode = reactioncode
+        self.both = both
+        if both:
+            self.features = df.drop("pt", axis=1).reset_index(drop=True)
+            self.label = df[["primaryid","caseid","pt"]].reset_index(drop=True)
+            reactcol=["primaryid","caseid"]
+
+            reactcol.extend(list(reactioncode))
+            self.processedLabel=pd.DataFrame(columns=reactcol)
+
+            columns=["primaryid","caseid","sex", "age", "wt"]
+            columns.extend(list(self.hotcode))
+            self.processedFeatures=pd.DataFrame(columns=columns)
+
+
+            self.processedFeatures.to_csv("Features_"+self.savePath , index=False, header=True)
+            self.processedLabel.to_csv("Labels_"+self.savePath,index=False, header=True)
+        else:
+            a = ['primaryid','caseid_x','age', 'sex', 'wt', 'pt']
+            a.extend(self.hotcode)
+            columns = a
+            self.ret = pd.DataFrame(columns=columns)
+
+
+
     def setupLabels(self):
         print("setting up labels")
         r=[]
@@ -43,79 +67,149 @@ class oneHotEncoder():
     def setupColumns(self):
         print("setting up columns")
         startTime = time.time()
-        if not self.hotcode:
-
-            c=[]
-
-            [c.extend(ast.literal_eval(ai)) for ai in self.df.prod_ai]
-            c=dict(Counter(c))
-            ais=list(set([k for (k,v) in c.items() if v>self.aiThreshold]))
-        if self.hotcode:
+        if self.both:
             ais=self.hotcode
-        for ai in ais:
-            self.df[ai]=0
-
-        print("setup column finished in {} seconds".format(time.time()-startTime))
-
-    def encodeIndex(self,index):
-        startTime=time.time()
-        if index%5000==0:
-            print(index)
-
-
-        
-        ais=ast.literal_eval(self.df.prod_ai[index])
-
-        currRow=self.df.iloc[index]
-        if not self.mode:
-            reactions = ast.literal_eval(self.df.pt[index])
-            for reaction in reactions:
-
-                temp=copy.deepcopy(currRow)
-                if reaction in self.reactionList:
-                    temp.pt=reaction
-                    for ai in ais:
-                        if ai in self.df.columns:
-                            temp[ai]=1
-                temp=temp.drop(["primaryid","caseid","prod_ai"])
-                self.ret.append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
-                                                                      index=False, header=False)
-        else:
-            temp=copy.deepcopy(currRow)
             for ai in ais:
-                if ai in self.df.columns:
-                    temp[ai]=1
-            temp = temp.drop(["primaryid", "caseid_x", "prod_ai"])
-            self.ret.append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
-                                                                  index=False, header=False)
+                self.features[ai]=[0]*len(self.features)
+            reactions = self.reactioncode
+            for reaction in reactions:
+                self.label[reaction] = [0] * len(self.label)
 
-               
-    
+        else:
+            if not self.hotcode:
+                c = []
+
+                [c.extend(ast.literal_eval(ai)) for ai in self.df.prod_ai]
+                c = dict(Counter(c))
+                ais = list(set([k for (k, v) in c.items() if v > self.aiThreshold]))
+            if self.hotcode:
+                ais = self.hotcode
+            for ai in ais:
+                self.df[ai] = 0
+
+        print("setup column finished in {} seconds".format(time.time() - startTime))
+
+    def encodeIndex(self, index):
+        startTime = time.time()
+        if index % 10000 == 0:
+            print("index encoding:",index)
+
+        ais = ast.literal_eval(self.df.prod_ai[index])
+
+
+        currRow = self.df.iloc[index]
+        if self.both:
+            reactions = ast.literal_eval(self.df.pt[index])
+            currRowFeatures = self.features.iloc[index]
+            currRowLabels = self.label.iloc[index]
+            #reactions = self.reactioncode.keys()
+
+            labels={"primaryid":currRowLabels.primaryid,
+                    "caseid":currRowLabels.caseid}
+            features={"primaryid":currRowFeatures.primaryid,
+                      "caseid":currRowFeatures.caseid,
+                      "age":currRowFeatures.age,
+                      "wt":currRowFeatures.wt,
+                      "sex":currRowFeatures.sex}
+            for ai in ais:
+                #if ai in self.features.columns:
+                features[ai] = 1
+            for reaction in reactions:
+                #if reaction in self.label.columns:
+                labels[reaction] = 1
+            #print(currRowFeatures)
+            #print(currRowLabels)
+            #currRowFeatures = currRowFeatures.drop(["caseid_x","prod_ai"])
+            #currRowLabels = currRowLabels.drop(["caseid_x","pt"])
+            #print(features)
+            #print(labels)
+            featdf=self.processedFeatures.append(pd.Series(currRowFeatures), ignore_index=True).fillna(0)
+            featdf.to_csv("Features_"+self.savePath, mode="a", index=False, header=False)
+            #print(featdf)
+            labeldf=self.processedLabel.append(pd.Series(currRowLabels), ignore_index=True).fillna(0)
+            labeldf.to_csv("Labels_"+self.savePath, mode="a",index=False, header=False)
+            #print(labeldf)
+            #return
+        else:
+            if not self.mode:
+                reactions = ast.literal_eval(self.df.pt[index])
+                for reaction in reactions:
+
+                    temp = copy.deepcopy(currRow)
+                    if reaction in self.reactionList:
+                        temp.pt = reaction
+                        for ai in ais:
+                            if ai in self.df.columns:
+                                temp[ai] = 1
+
+
+                    temp = temp.drop(["prod_ai"])
+                    self.ret.append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
+                                                                    index=False, header=False)
+            else:
+
+                temp = copy.deepcopy(currRow)
+                # retDict={"primaryid": temp.primaryid,
+                #  "caseid": temp.caseid,
+                #  "age": temp.age,
+                #  "wt": temp.wt,
+                #  "sex": temp.sex,
+                # "pt": temp.pt}
+                for col in self.ret.columns:
+                    if col in ais:
+                        temp[col] = 1
+                # for ai in ais:
+                #     if ai in self.ret.columns:
+                #         temp[ai] = 1
+
+                temp = temp.drop(["prod_ai", "caseid_x"])
+                self.ret.append(temp, ignore_index=True).to_csv(self.savePath, mode="a",
+                                                                index=False, header=False)
+
     def encode(self):
         print("encoding active ingredients")
+        self.df.reset_index(drop=True, inplace=True)
         indexes=list(range(len(self.df)))
-
-        # a =['age','sex','wt','pt'].extend(self.hotcode)
-        # columns = a
-        self.ret=pd.DataFrame()
-        #self.ret.to_csv(self.savePath, index=False, header=True)
-        pool=multiprocessing.Pool(processes=10)
+        self.ret.to_csv(self.savePath, index=False, header=True)
+        pool=multiprocessing.Pool(processes=9)
         pool.map(self.encodeIndex,indexes)
         pool.close()
         pool.join()
-        self.df.drop("prod_ai",axis=1,inplace=True)
-        print('Time taken to encode AIs = {} seconds'.format(time.time() - self.startTime))
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/jdklee/Downloads/patentcitation-291203-3875e284f934.json'
 
-        gcs = storage.Client()
-        gcs.get_bucket('abbvie_data_one').blob("{}OneHotEncoded.csv".format(self.mode)).upload_from_filename("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode),
-                                                                                 content_type='text/csv')
-        print("save to gcloud successful {}".format(self.mode))
-        os.remove("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode))
-        os.remove("/Users/jdklee/Documents/AbbVie/aggregate_{}.csv".format(self.mode))
+        # for i in indexes:
+        #     self.encodeIndex(i)
+
+        self.df.drop("prod_ai",axis=1,inplace=True)
+        if not self.both:
+            print('Time taken to encode AIs = {} seconds'.format(time.time() - self.startTime))
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/jdklee/Downloads/patentcitation-291203-3875e284f934.json'
+
+            gcs = storage.Client()
+            gcs.get_bucket('abbvie_data_one').blob("{}OneHotEncodedXGB.csv".format(self.mode)).upload_from_filename("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode),
+                                                                                     content_type='text/csv')
+            print("save to gcloud successful {}".format(self.mode))
+
+            os.remove("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode))
+            os.remove("/Users/jdklee/Documents/AbbVie/aggregate_{}.csv".format(self.mode))
+        if self.both:
+            print('Time taken to encode AIs = {} seconds'.format(time.time() - self.startTime))
+            os.environ[
+                'GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/jdklee/Downloads/patentcitation-291203-3875e284f934.json'
+
+            gcs = storage.Client()
+            gcs.get_bucket('abbvie_data_one').blob("oneHotEncodedLabels.csv").upload_from_filename\
+                ("/Users/jdklee/Documents/AbbVie/oneHotEncodedLabels.csv".format(self.mode),
+                                                                                     content_type='text/csv')
+            gcs.get_bucket('abbvie_data_one').blob("oneHotEncodedFeatures.csv").upload_from_filename\
+                ("/Users/jdklee/Documents/AbbVie/oneHotEncodedFeatures.csv".format(self.mode),
+                                                                                     content_type='text/csv')
+            print("save to gcloud successful {}".format(self.mode))
+            os.remove("/Users/jdklee/Documents/AbbVie/{}OneHotEncoded.csv".format(self.mode))
+            os.remove("/Users/jdklee/Documents/AbbVie/aggregate_{}.csv".format(self.mode))
     def run(self):
-        self.setupColumns()
-        if not self.mode:
+        if not self.both:
+            self.setupColumns()
+        if not self.mode and not self.both:
             self.setupLabels()
         self.encode()
 

@@ -1,7 +1,5 @@
 import pandas as pd
-import os
-from io import StringIO
-from google.cloud import storage
+
 import numpy as np
 import time
 import multiprocessing
@@ -43,12 +41,12 @@ class dataSetup():
         drug=drug[drug.primaryid!="\n"]
         drug["primaryid"]=drug.primaryid.apply(lambda x: int(float(x)))
         drug["caseid"]=drug.caseid.apply(lambda x: int(float(x)))
-        drug.dropna(inplace=True)
+        #drug.dropna(inplace=True)
         demo=demo[demo.primaryid!="\n"]
         demo["primaryid"]=demo.primaryid.apply(lambda x: int(float(x)))
 
         demo["caseid"]=demo.caseid.apply(lambda x: int(float(x)))
-        demo.dropna(inplace=True)
+        #demo.dropna(inplace=True)
 
         demo['sex']=demo.sex.apply(lambda x: 0 if x=="M" else 1)
 
@@ -56,7 +54,7 @@ class dataSetup():
         reac["primaryid"]=reac.primaryid.apply(lambda x:int(float(x)))
         reac["caseid"]=reac.caseid.apply(lambda x: int(float(x)))
 
-        reac.dropna(inplace=True)
+        #reac.dropna(inplace=True)
         self.demo=demo.reset_index(drop=True)
         self.setupAge()
         self.drug=drug.reset_index(drop=True)
@@ -94,8 +92,8 @@ class dataSetup():
         #print("pairdrug:\n",pairDrug)
         #print("pairReaact:\n",pairReact)
               
-        first_df=demo_filtered.merge(pairDrug.dropna(), how="inner", on=["primaryid"])
-        roughDF=first_df.merge(pairReact.dropna(),how="inner", on=["primaryid"])
+        first_df=demo_filtered.merge(pairDrug, how="inner", on=["primaryid"])
+        roughDF=first_df.merge(pairReact,how="inner", on=["primaryid"])
         
         self.finalDF=roughDF
         
@@ -202,8 +200,8 @@ class setupDataFilter(dataSetup):
 
         a = AImerger(drug=drug_filtered, react=reac_filtered)
         pairDrug = a.mergeAIsimple()
-        first_df=reac_filtered.merge(demo_filtered.dropna(), how="inner", on=["primaryid"])
-        roughDF=first_df.merge(pairDrug.dropna(),how="inner", on=["primaryid"])
+        first_df=reac_filtered.merge(demo_filtered, how="inner", on=["primaryid"])
+        roughDF=first_df.merge(pairDrug,how="inner", on=["primaryid"])
         
         self.finalDF=roughDF
         

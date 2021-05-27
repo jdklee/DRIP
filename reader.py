@@ -6,11 +6,6 @@ from encoder import *
 import numpy as np
 import time
 import multiprocessing
-
-import os
-from io import StringIO
-from google.cloud import storage
-
 class dataReader():
     def __init__(self, chunkSize, drugs, reactions, demographics,mode=False):
         self.chunkSize=chunkSize
@@ -39,29 +34,26 @@ class dataReader():
         #read drugs
         try:
             d=pd.read_csv(drug, sep='$', lineterminator='\r', usecols=drugcols,).dropna().reset_index(drop=True)
-        except Exception as e:
-            print(e)
+        except:
 
             print("n:{}\n".format(n),self.drugs[n],"\n",pd.read_csv(drug, sep='$', lineterminator='\r').columns)
 
         #read reactions
         try:
             r=pd.read_csv(react, sep='$', lineterminator='\r', usecols=reaccols,)
-        except Exception as e:
-            print(e)
+        except:
+
             print("n:{}\n".format(n),self.reactions[n],"\n",pd.read_csv(react, sep='$', lineterminator='\r').columns)
 
         #read demo
         try:
             dem=pd.read_csv(demo, sep='$', lineterminator='\r', usecols=democols,)
-        except Exception as e:
-            print(e)
+        except:
             try:
                 dem=pd.read_csv(demo, sep='$', lineterminator='\r', 
                                 usecols=["primaryid","caseid","age","gndr_cod","wt","wt_cod"])
                 dem=dem.rename({"gndr_cod":"sex"},axis=1)
-            except Exception as e:
-                print(e)
+            except:
                 print("n:{}\n".format(n),self.demographics[n],"\n",pd.read_csv(demo, sep='$', lineterminator='\r').columns)
                 
         try:
@@ -70,7 +62,7 @@ class dataReader():
                 df=a.clean()
                 df=a.finalDF
 
-                df.dropna().to_csv(self.outputFile, mode="a", index=False)
+                df.to_csv(self.outputFile, mode="a", index=False)
                 
             if "pair" in self.mode or "single" in self.mode:
                 print("Mean Encoder setup")
@@ -78,7 +70,7 @@ class dataReader():
                 df=a.clean()
                 print("drug merge complete, saving to csv")
                 self.outputFile="aggregate_{}.csv".format(self.mode)
-                df.dropna().to_csv(self.outputFile, mode="a", index=False)
+                df.to_csv(self.outputFile, mode="a", index=False)
                 print("save complete for {}".format(n))
                 
                 
@@ -89,12 +81,10 @@ class dataReader():
                 a = setupDataFilter(demo=dem, drug=d, reac=r, reactionType=self.mode)
                 df = a.clean()
                 self.outputFile="aggregate_{}.csv".format(self.mode)
-                print(self.outputFile)
 
-                df.dropna().to_csv(self.outputFile, mode="a", index=False)
-
-        except Exception as e:
-            print(e)
+                df.to_csv(self.outputFile, mode="a", index=False)
+            
+        except:
             print("failed for {}".format(n))
             
     def multiprocessor(self):
@@ -115,6 +105,6 @@ class dataReader():
             startTime=time.time()
             pool = multiprocessing.Pool(processes=10)
             result=pool.map(self.appender, range(len(csvList)))
-            print("time taken to process {}: {}".format(self.mode, str(time.time()-startTime)))
+            print("time taken to process {}: {}".format(self.mode, str(startTime-time.time())))
             pool.close()
             pool.join()
