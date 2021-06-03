@@ -14,7 +14,8 @@ from xgboost import XGBClassifier
 from xgboost import plot_importance
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-
+from google.cloud import storage
+import os
 import pandas as pd
 import ast
 from collections import Counter
@@ -90,46 +91,111 @@ class onehotReader():
         columns.extend(a)
         self.columns = columns
         self.mode = mode
+        self.reaction = self.list_blobs()
+    def list_blobs(self):
+        """Lists all the blobs in the bucket."""
+        from google.cloud import storage
+        import os
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/home/jdklee/gcp/patentcitation-291203-3875e284f934.json'
+        bucket_name = "abbvie_data_one"
 
-    def readReaction(self, reaction):
+        storage_client = storage.Client()
+
+        # Note: Client.list_blobs requires at least package version 1.17.0.
+        blobs = storage_client.list_blobs(bucket_name)
+
+        files = [blob.name for blob in blobs]
+        files = [i.split("One")[0] for i in files if "aggregate" not in i]
+        self.reactions=files
+        #print(files)
+        return files
+    def readReaction(self, reaction, chunk=False):
         print("reading", reaction)
-        df = pd.read_csv("gs://abbvie_data_one/{}OneHotEncoded.csv".format(reaction), names=self.columns, header=None)
-        return df
+        try:
+            if chunk:
+                df=pd.read_csv("gs://abbvie_data_one/{}OneHotEncoded.csv".format(reaction),
+                               names=self.columns,
+                               nrows=chunk, header=None)
+                return df
+            else:
+                df = pd.read_csv("gs://abbvie_data_one/{}OneHotEncoded.csv".format(reaction), names=self.columns, header=None)
+                self.terminate=False
+                return df
+        except:
+            print("One hot encoded don't exist")
+            self.terminate=True
 
     def random_pick(self,reactionList):
+        import copy
         import random
-        temp = reactionList
-
+        temp = copy.deepcopy(reactionList)
         #remove all used reactions
         temp.remove(self.target)
         [temp.remove(i) for i in self.restList]
         random_index = random.randint(0, len(temp) - 1)
-        self.restList.append(reactionList[random_index])
-        return reactionList[random_index]
+
+        #edit distance to get most unrelated ones
+        import nltk
+        while nltk.edit_distance(temp[random_index], self.target) <10:
+            random_index = random.randint(0, len(temp) - 1)
+        return temp[random_index]
+
+    def remove_duplicates(self,df):
+        features=df.drop(["label","pt"],axis=1)
+        to_drop=features[features.duplicated(keep="first")==True].index
+        df.drop(list(to_drop), axis=0, inplace=True)
+        print(len(to_drop),"rows dropped")
+        return df
 
     def read(self):
         if self.binary:
             self.targetDF=self.readReaction(self.target)
+            if 200 in self.targetDF.columns:
+                print("target DF contains different columns")
+                return False
+            if self.terminate:
+                return False
             alert=False
             #alarm for when cond is met
             while not alert:
-                rest = self.random_pick(list(self.reactionDict.keys()))
+                rest = self.random_pick(self.reaction)
                 try:
                     to_append = self.readReaction(rest)
                     print("length of target:",len(self.targetDF))
                     print("length of to append+ restDF:",len(to_append)+len(self.restDF))
-
-                    if len(to_append)+len(self.restDF) < len(self.targetDF)+400:
+                    if len(self.targetDF)<10000 and len(to_append)>len(self.targetDF):
+                        to_append = self.readReaction(rest, chunk=(len(self.targetDF)-len(self.restDF)))
+                        print("small targetDF: ", len(self.targetDF))
                         print("appending to restDF")
-                        self.restDF=self.restDF.append(to_append)
-                        #print("length of others df after append:", len(self.restDF))
+                        self.restDF = self.restDF.append(to_append)
+                        self.restList.append(rest)
+                        print("append {} to restList".format(rest))
+                            # print("length of others df after append:", len(self.restDF))
+                        if 0.70 > len(self.targetDF)/(len(self.targetDF)+len(self.restDF)):
+                            if len(self.targetDF) / (len(self.targetDF)+len(self.restDF)) > 0.30:
+                                total_length=len(self.restDF)+len(self.targetDF)
+                                print("found the golden ratio:", len(self.targetDF)/total_length)
+                                alert = True
+                                print("reset restList")
+                                self.restList=[]
+                    else:
+                        if len(to_append)+len(self.restDF) < len(self.targetDF)+5000:
+                            print("appending to restDF")
+                            self.restDF=self.restDF.append(to_append)
+                            self.restList.append(rest)
+                            print("append {} to restList".format(rest))
+                            #print("length of others df after append:", len(self.restDF))
 
-                    if 0.60 > len(self.targetDF)/(len(self.targetDF)+len(self.restDF)):
-                        if len(self.targetDF) / (len(self.targetDF)+len(self.restDF)) > 0.40:
-                            total_length=len(self.restDF)+len(self.targetDF)
-                            print("found the golden ratio:", len(self.targetDF)/total_length)
-                            alert = True
-                except:
+                        if 0.60 > len(self.targetDF)/(len(self.targetDF)+len(self.restDF)):
+                            if len(self.targetDF) / (len(self.targetDF)+len(self.restDF)) > 0.40:
+                                total_length=len(self.restDF)+len(self.targetDF)
+                                print("found the golden ratio:", len(self.targetDF)/total_length)
+                                alert = True
+                                print("reset restList")
+                                self.restList=[]
+
+                except Exception as e:
+                    print(e)
                     print(rest, " is not found in bucket")
 
             #Keep picking new reactions until ratio is at around 0.5

@@ -18,10 +18,17 @@ from sklearn.metrics import accuracy_score
 from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
 
 
-class xgbCustom():
+class xgbCustom(XGBClassifier):
 
     def __init__(self, df, featureThreshold, featureReductionThreshold, reductionMercyThreshold,
                  binary=False, target=False, test=False, gpu=-1):
+        if binary:
+            objective="binary:logistic"
+        else:
+            objective="multi:softprob"
+
+        XGBClassifier.__init__(self,eval_metric="auc",objective=objective)
+        # df=self.remove_duplicates(df)
         df=sklearn.utils.shuffle(df)
         df=df.reset_index(drop=True)
         self.binary=binary
@@ -58,6 +65,9 @@ class xgbCustom():
         self.test=test
         self.reduceMercy=0
         self.reductionMercyThreshold=reductionMercyThreshold
+
+    def predict_proba(self, traindata):
+        return self.model.predict_proba(traindata)
     def fit(self):
         print("length of columns:", len(self.X_train.columns))
         print("fitting")
@@ -68,16 +78,25 @@ class xgbCustom():
                              "tree_method":"gpu_hist"})
 
         self.model.fit(self.X_train, self.y_train)
-
+        if self.binary:
+            average="binary"
+        else:
+            average="macro"
         print("train results:")
         predictions=self.model.predict(self.X_train)
         accuracy = sklearn.metrics.accuracy_score(self.y_train, predictions)
-        f1_score = sklearn.metrics.f1_score(self.y_train, predictions, average="macro")
-        precision = sklearn.metrics.precision_score(self.y_train, predictions, average="macro")
-        recall = sklearn.metrics.recall_score(self.y_train, predictions, average="macro")
+        f1_score = sklearn.metrics.f1_score(self.y_train, predictions, average=average)
+        precision = sklearn.metrics.precision_score(self.y_train, predictions, average=average)
+        recall = sklearn.metrics.recall_score(self.y_train, predictions, average=average)
         confusion_matrix = sklearn.metrics.confusion_matrix(self.y_train, predictions)
+        feature_importances=self.model.feature_importances_
+        self.featureImportances[self.target]={col:feat for col,feat in\
+                                              zip(self.features.columns,feature_importances)}
+
+        self.featureImportances[self.target] = dict(sorted(self.featureImportances[self.target].items(),
+                                                      key=lambda x: x[1], reverse=True))
         if self.binary:
-            auc = sklearn.metrics.roc_auc_score(self.y_test, predictions, average="macro", multi_class="ovr")
+            auc = sklearn.metrics.roc_auc_score(self.y_train, predictions)
         print("train Accuracy:".format(str(self.counter)), accuracy, "\n")
         print("train f1_score:".format(str(self.counter)), f1_score, "\n")
         print("train precision:".format(str(self.counter)), precision, "\n")
@@ -85,10 +104,20 @@ class xgbCustom():
         if self.binary:
             print("train auc:".format(str(self.counter)), auc, "\n")
         print("train cm:".format(str(self.counter)), confusion_matrix, "\n")
+        self.model.save_model("{}_xgb_model.json".format(self.target))
     def predict(self):
         print("predicting")
         y_pred = self.model.predict(self.X_test)
         return y_pred
+
+    def remove_duplicates(self,df):
+        features=df.drop(["label","pt"],axis=1)
+        to_drop=features[features.duplicated(keep="first")==True].index
+        df.drop(list(to_drop), axis=0, inplace=True)
+        print(len(to_drop),"rows dropped")
+        return df
+
+
 
     def refineFeatures(self):
         print("refining features")
@@ -116,13 +145,18 @@ class xgbCustom():
         #    predictions=[np.argmax(i) for i in predictions]
 
         # evaluate predictions
+
+        if self.binary:
+            average="binary"
+        else:
+            average="macro"
         accuracy = sklearn.metrics.accuracy_score(self.y_test, predictions)
-        f1_score = sklearn.metrics.f1_score(self.y_test, predictions, average="macro")
-        precision = sklearn.metrics.precision_score(self.y_test, predictions, average="macro")
-        recall = sklearn.metrics.recall_score(self.y_test, predictions, average="macro")
+        f1_score = sklearn.metrics.f1_score(self.y_test, predictions, average=average)
+        precision = sklearn.metrics.precision_score(self.y_test, predictions, average=average)
+        recall = sklearn.metrics.recall_score(self.y_test, predictions, average=average)
         confusion_matrix = sklearn.metrics.confusion_matrix(self.y_test, predictions)
         if self.binary:
-            auc = sklearn.metrics.roc_auc_score(self.y_test, predictions, average="macro", multi_class="ovr")
+            auc = sklearn.metrics.roc_auc_score(self.y_test, predictions)
         if not mode:
             print("round {} Accuracy:".format(str(self.counter)), accuracy,"\n")
             print("round {} f1_score:".format(str(self.counter)), f1_score,"\n")
@@ -147,6 +181,8 @@ class xgbCustom():
                                                                          list(self.model.feature_importances_))}
             importanceDict = dict(sorted(importanceDict.items(), key=lambda x: x[1]), reverse=True)
             self.featureImportances["final"] = importanceDict
+        if self.binary:
+            return accuracy, auc, f1_score, precision, recall, confusion_matrix
         return accuracy,f1_score,precision,recall,confusion_matrix
     def run(self):
         self.fit()
@@ -224,17 +260,18 @@ class xgbCustom():
             'colsample_bytree': hp.quniform('colsample_bytree', 0.1, 1.0, 0.01),
 
         }
-        if self.gpu != -1:
-            space["updater"]="grow_gpu"
-            space["predictor"]="gpu_predictor"
-            space["tree_method"]="gpu_hist"
+        # if self.gpu != -1:
+        #     print("GPU USED!")
+        #     space["updater"]="grow_gpu"
+        #     space["predictor"]="gpu_predictor"
+        #     space["tree_method"]="gpu_hist"
 
         trials = Trials()
 
         best_hyperparams = fmin(fn=self.objective,
                                 space=space,
                                 algo=tpe.suggest,
-                                max_evals=50,
+                                max_evals=25,
                                 trials=trials)
         if self.binary:
             print("For reaction {}".format(self.target))
@@ -242,6 +279,7 @@ class xgbCustom():
         print(best_hyperparams)
         self.bestHyperparams=best_hyperparams
     #Tune and rerun for final results
+
     def optimize_run(self):
         self.hyperTune()
         params=self.bestHyperparams
@@ -249,7 +287,7 @@ class xgbCustom():
             objective="binary:logistic"
         else:
             objective="multi:softprob"
-        model=XGBClassifier(objective=objective,
+        model=XGBClassifier(
                             eval_metric="auc",
                             n_estimators=params['n_estimators'],
                             learning_rate=params["learning_rate"],
@@ -258,16 +296,16 @@ class xgbCustom():
                             min_child_weight=params['min_child_weight'],
                             subsample=params["subsample"],
                             colsample_bytree=params['colsample_bytree'])
-        if self.gpu != -1:
-            model.set_param({"updater":"grow_gpu",
-                             "predictor":"gpu_predictor",
-                             "tree_method":"gpu_hist"})
+        # if self.gpu != -1:
+        #     model.set_param({"updater":"grow_gpu",
+        #                      "predictor":"gpu_predictor",
+        #                      "tree_method":"gpu_hist"})
 
         self.model=model
 
         self.fit()
         y_pred = self.predict()
-        accuracy, f1_score, precision, recall, confusion_matrix = self.eval(y_pred=y_pred, mode="final")
+        accuracy, auc, f1_score, precision, recall, confusion_matrix = self.eval(y_pred=y_pred, mode="final")
         self.model.save_model("{}_xgb_model_tuned.json".format(self.target))
 
 
@@ -276,15 +314,13 @@ class xgbCustom():
 
     def objective(self,space):
         clf = XGBClassifier(
-            eval_metric="auc",
             n_estimators=space['n_estimators'],
             learning_rate=space["learning_rate"],
             max_depth=space['max_depth'],
             gamma=space['gamma'],
             min_child_weight=space['min_child_weight'],
             subsample=space["subsample"],
-            colsample_bytree=space['colsample_bytree'],
-        num_class=2)
+            colsample_bytree=space['colsample_bytree'])
             # n_estimators=space['n_estimators'],
             # #eval_metric="auc",if self.gpu != -1
             # max_depth=int(space['max_depth']),
@@ -293,12 +329,12 @@ class xgbCustom():
             # min_child_weight=int(space['min_child_weight']),
             # colsample_bytree=int(space['colsample_bytree']),
             # num_class=2)
-        if self.gpu != -1:
-            clf.set_param({"updater":"grow_gpu",
-                             "predictor":"gpu_predictor",
-                             "tree_method":"gpu_hist"})
+        # if self.gpu != -1:
+        #     clf.set_param({"updater":"grow_gpu",
+        #                      "predictor":"gpu_predictor",
+        #                      "tree_method":"gpu_hist"})
 
-        evaluation = [(self.X_test, self.y_test)]
+        evaluation = [(self.X_train, self.y_train),(self.X_test, self.y_test)]
 
         clf.fit(self.X_train, self.y_train,
                 #eval_metric="auc",
@@ -316,21 +352,30 @@ class xgbCustom():
 
         # if self.binary:
         #     auc = cross_val_score(clf, self.X_test, self.y_test, scoring="auc", cv=5)
+        # if self.binary:
+        #     average="binary"
+        # else:
+        #     average="macro"
+        # accuracy = sklearn.metrics.accuracy_score(self.y_test, predictions)
+        # f1_score = sklearn.metrics.f1_score(self.y_test, predictions, average=average)
+        # precision = sklearn.metrics.precision_score(self.y_test, predictions, average=average)
+        # recall = sklearn.metrics.recall_score(self.y_test, predictions, average=average)
+        # confusion_matrix = sklearn.metrics.confusion_matrix(self.y_test, predictions)
+        # if self.binary:
+        #     auc = sklearn.metrics.roc_auc_score(self.y_test, predictions, average=average)
+        result_dict = sklearn.model_selection.cross_validate(a.model, X_test, y=y_test,
+                                                             scoring=["accuracy", "roc_auc", "recall",
+                                                                      "precision", "f1", "jaccard"],
+                                                             cv=5, )
+        result_dict = {k: np.mean(v) for k, v in result_dict.items()}
+        print(result_dict)
+        auc=result_dict["test_roc_auc"]
 
-        accuracy = sklearn.metrics.accuracy_score(self.y_test, predictions)
-        f1_score = sklearn.metrics.f1_score(self.y_test, predictions, average="macro")
-        precision = sklearn.metrics.precision_score(self.y_test, predictions, average="macro")
-        recall = sklearn.metrics.recall_score(self.y_test, predictions, average="macro")
-        confusion_matrix = sklearn.metrics.confusion_matrix(self.y_test, predictions)
-        if self.binary:
-            auc = sklearn.metrics.roc_auc_score(self.y_test, predictions, average="macro")
-
-
-        print(" Accuracy:", accuracy,"\n")
-        print("f1_score:", f1_score,"\n")
-        print("precision:", precision,"\n")
-        print("recall:", recall,"\n")
-        if self.binary:
-            print("auc:", auc,"\n")
-        print("cm:", confusion_matrix,"\n")
-        return {'loss': -accuracy, 'status': STATUS_OK}
+        # print(" Accuracy:", accuracy,"\n")
+        # print("f1_score:", f1_score,"\n")
+        # print("precision:", precision,"\n")
+        # print("recall:", recall,"\n")
+        # if self.binary:
+        #     print("auc:", auc,"\n")
+        # print("cm:", confusion_matrix,"\n")
+        return {'loss': -auc, 'status': STATUS_OK}
