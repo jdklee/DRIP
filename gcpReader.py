@@ -92,6 +92,7 @@ class onehotReader():
         self.columns = columns
         self.mode = mode
         self.reaction = self.list_blobs()
+
     def list_blobs(self):
         """Lists all the blobs in the bucket."""
         from google.cloud import storage
@@ -131,7 +132,7 @@ class onehotReader():
         temp = copy.deepcopy(reactionList)
         #remove all used reactions
         temp.remove(self.target)
-        [temp.remove(i) for i in self.restList]
+        [temp.remove(i) for i in self.restList if i in temp]
         random_index = random.randint(0, len(temp) - 1)
 
         #edit distance to get most unrelated ones

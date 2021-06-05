@@ -33,7 +33,7 @@ class xgbCustom(XGBClassifier):
         df=df.reset_index(drop=True)
         self.binary=binary
         self.target=target
-        self.test_size = 0.33
+        self.test_size = 0.2
         label = df.label
         self.label = label
         print("length of label:", len(label))
@@ -190,7 +190,7 @@ class xgbCustom(XGBClassifier):
         accuracy,f1_score,precision,recall,confusion_matrix=self.eval(y_pred=y_pred)
         self.currentAccuracy=accuracy
         if self.binary:
-            self.model.save_model("{}_xgb_model.json".format(self.target))
+            self.model.save_model("/home/jdklee/models/{}_xgb_model.json".format(self.target))
 
         # predictions = [np.argmax(value) for value in y_pred]
         # # evaluate predictions

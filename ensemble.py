@@ -48,6 +48,11 @@ class ensemble():
         arr = os.listdir()
 
         self.reaction=self.list_blobs()
+        # for idx,i in enumerate(self.reaction):
+        #     if i=="Condition aggravated":
+        #         lim=idx
+        #         break
+        # self.reaction=self.reaction[lim+1:]
         #For interpretation, keep indexes of each models
         self.model_dict={}
         self.model_index={}
@@ -87,8 +92,8 @@ class ensemble():
         return files
 
     def save_test_data(self, x_test, y_test):
-        x_test.to_csv("test_data_features_aggregate.csv", mode="a",index=False, header=True)
-        y_test.to_csv("test_data_label_aggregate.csv", mode="a",index=False, header=True)
+        x_test.to_csv("/home/jdklee/models/test_data_features_aggregate.csv", mode="a",index=False, header=True)
+        y_test.to_csv("/home/jdklee/models/test_data_label_aggregate.csv", mode="a",index=False, header=True)
 
 
 
@@ -99,7 +104,7 @@ class ensemble():
         # Train separate models
         for reaction in reactions:
             #print(os.getcwd())
-            path="/home/jdklee/{}_xgb_model.json".format(reaction)
+            path="/home/jdklee/models/{}_xgb_model.json".format(reaction)
             #print(path)
             if os.path.exists(path):
                 print("model exists for ", reaction)
@@ -135,29 +140,46 @@ class ensemble():
                 print("target {} probability:".format(reaction), probability)
                 self.predictions[reaction] = probability
 
-                #Get CM
+                # Get CM
                 print("calculating metrics results")
-                from sklearn.model_selection import cross_val_predict
-                from sklearn.metrics import confusion_matrix
-                y_pred = cross_val_predict(a.model, X_test, y_test, cv=5)
-                import sklearn
-                confusion_matrix = sklearn.metrics.confusion_matrix(y_test, y_pred)
+
+                if len(X_test)<2500:
+                    print("cross validating")
+                    from sklearn.model_selection import cross_val_predict
+                    from sklearn.metrics import confusion_matrix
+                    y_pred = cross_val_predict(a.model, X_test, y_test, cv=5)
+                    import sklearn
+                    confusion_matrix = sklearn.metrics.confusion_matrix(y_test, y_pred)
 
 
 
-                #crossvalidate results to get scores
-                import sklearn
-                #Get scores
-                print(" ---getting cv scores---")
-                result_dict=sklearn.model_selection.cross_validate(a.model, X_test, y=y_test,
-                                                       scoring=["accuracy","roc_auc","recall",
-                                                                "precision", "f1","jaccard"],
-                                                                   cv=5,)
-                result_dict = {k: np.mean(v) for k,v in result_dict.items()}
-                self.evaluations[reaction] = {"confusion_matrix": confusion_matrix.tolist(),
-                                              "result_dict": result_dict}
-                print("for reaction {}, the cm is: \n".format(reaction), confusion_matrix)
-                print("real results:\n",result_dict)
+
+
+                    #crossvalidate results to get scores
+                    import sklearn
+                    #Get scores
+                    print(" ---getting cv scores---")
+                    result_dict=sklearn.model_selection.cross_validate(a.model, X_test, y=y_test,
+                                                           scoring=["accuracy","roc_auc","recall",
+                                                                    "precision", "f1","jaccard"],
+                                                                       cv=5,)
+                    result_dict = {k: np.mean(v) for k,v in result_dict.items()}
+                    self.evaluations[reaction] = {"confusion_matrix": confusion_matrix.tolist(),
+                                                  "result_dict": result_dict}
+                    print("for reaction {}, the cm is: \n".format(reaction), confusion_matrix)
+                    print("real results:\n",result_dict)
+
+                else:
+                    y_pred=a.predict()
+                    accuracy, auc, f1_score, precision, recall, confusion_matrix=a.eval(y_pred)
+                    result_dict={"test_accuracy":accuracy, "test_roc_auc":auc, "test_f1":f1_score,
+                                 "test_precision":precision, "test_recall":recall}
+                    self.evaluations[reaction] = {"confusion_matrix": confusion_matrix.tolist(),
+                                                  "result_dict": result_dict}
+                    print(reaction,"real results:\n", result_dict)
+
+
+
 
                 #Dump results
 
@@ -170,13 +192,13 @@ class ensemble():
 
         gcs = storage.Client()
         gcs.get_bucket('abbvie_data_one').blob("results.txt").upload_from_filename \
-            ("/home/jdklee/result_dictionaries.txt".format(self.mode),
+            ("/home/jdklee/models/result_dictionaries.txt",
              content_type='text/csv')
         gcs.get_bucket('abbvie_data_one').blob("test_data_features_aggregate.csv").upload_from_filename \
-            ("/home/jdklee/test_data_features_aggregate".format(self.mode),
+            ("/home/jdklee/models/test_data_features_aggregate.csv",
              content_type='text/csv')
         gcs.get_bucket('abbvie_data_one').blob("test_data_label_aggregate.csv").upload_from_filename \
-            ("/home/jdklee/test_data_label_aggregate.csv".format(self.mode),
+            ("/home/jdklee/models/test_data_label_aggregate.csv",
              content_type='text/csv')
 
 
@@ -197,8 +219,8 @@ class ensemble():
         #print(a)
         print(self.evaluations[reaction])
         #print(self.feature_importances[reaction])
-        with open("/home/jdklee/result_dictionaries.txt", "a") as f:
-            f.write(str(a))
+        with open("/home/jdklee/models/result_dictionaries.txt", "a") as f:
+            f.write(str(a)+"\n")
 
     def eval(self):
         #Get probabilities for each reaction
